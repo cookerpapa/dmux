@@ -416,7 +416,7 @@ export class PopupManager {
       )
       const result = await this.launchPopup<string>(
         "kebabMenuPopup.js",
-        [getPaneDisplayName(pane), JSON.stringify(actions)],
+        [],
         {
           width: 60,
           height: Math.min(26, actions.length + 6),
@@ -424,7 +424,7 @@ export class PopupManager {
           positioning: options.anchorToPane ? "pane" : "standard",
           targetPaneId: options.anchorToPane ? pane.paneId : undefined,
         },
-        undefined,
+        { paneName: getPaneDisplayName(pane), actions },
         getPaneProjectRoot(pane, this.config.projectRoot)
       )
 

@@ -11,6 +11,7 @@ import type { PaneMenuAction } from '../../actions/types.js';
 import { PopupContainer, PopupWrapper, writeSuccessAndExit } from './shared/index.js';
 import { POPUP_CONFIG } from './config.js';
 import { pathToFileURL } from 'url';
+import fs from 'fs';
 import {
   createMouseFilteredStdin,
   MOUSE_REPORTING_ENABLE,
@@ -112,19 +113,18 @@ export const KebabMenuPopupApp: React.FC<KebabMenuPopupProps> = ({ resultFile, p
 // Entry point
 function main() {
   const resultFile = process.argv[2];
-  const paneName = process.argv[3];
-  const actionsJson = process.argv[4];
+  const dataFile = process.argv[3];
 
-  if (!resultFile || !paneName || !actionsJson) {
-    console.error('Error: Result file, pane name, and actions JSON required');
+  if (!resultFile || !dataFile) {
+    console.error('Error: Result file and data file required');
     process.exit(1);
   }
 
-  let actions: PaneMenuAction[];
+  let data: { paneName: string; actions: PaneMenuAction[] };
   try {
-    actions = JSON.parse(actionsJson);
+    data = JSON.parse(fs.readFileSync(dataFile, 'utf-8'));
   } catch (error) {
-    console.error('Error: Failed to parse actions JSON');
+    console.error('Error: Failed to read or parse data file');
     process.exit(1);
   }
 
@@ -141,8 +141,8 @@ function main() {
   render(
     <KebabMenuPopupApp
       resultFile={resultFile}
-      paneName={paneName}
-      actions={actions}
+      paneName={data.paneName}
+      actions={data.actions}
       mouseEvents={mouseFilter?.events}
     />,
     mouseFilter ? { stdin: mouseFilter.stdin } : undefined
