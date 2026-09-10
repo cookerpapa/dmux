@@ -1,4 +1,4 @@
-name: Validate reopened worktree fix
+name: Validate upstream baseline
 
 on:
   push:
@@ -9,12 +9,13 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  upstream-baseline:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: 8cb3d926631a9349ab67f7ece41d218427ac7e24
           persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
