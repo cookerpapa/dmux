@@ -315,6 +315,9 @@ export function useInputHandling(params: UseInputHandlingParams) {
       shellPane.projectName = path.basename(targetProjectRoot)
       shellPane.shellCwd = selectedPane.worktreePath
       shellPane.colorTheme = resolveProjectColorTheme(targetProjectRoot, sidebarProjects)
+      // Keep the source worktree recognizable until terminal auto-naming takes over.
+      shellPane.displayName = `${getPaneDisplayName(selectedPane)}-${shellPane.slug}`
+      shellPane.displayNameSource = "auto"
       await savePanes([...panes, shellPane])
 
       setStatusMessage(`Opened terminal in ${getPaneDisplayName(selectedPane)}`)
