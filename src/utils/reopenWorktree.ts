@@ -10,7 +10,7 @@ import {
 import { SIDEBAR_WIDTH, recalculateAndApplyLayout } from './layoutManager.js';
 import type { DmuxPane, DmuxConfig } from '../types.js';
 import { atomicWriteJsonSync } from './atomicWrite.js';
-import { buildWorktreePaneTitle } from './paneTitle.js';
+import { DMUX_BOOTSTRAP_PANE_TITLE_PREFIX } from './paneBootstrapConfig.js';
 import {
   AGENT_IDS,
   buildAgentResumeOrLaunchCommand,
@@ -119,7 +119,6 @@ export async function reopenWorktree(
 
   if (isFirstContentPane) {
     paneInfo = setupSidebarLayout(controlPaneId, projectRoot);
-    await new Promise((resolve) => setTimeout(resolve, 300));
   } else {
     // Subsequent panes - always split horizontally
     const dmuxPaneIds = existingPanes.map(p => p.paneId);
@@ -127,17 +126,19 @@ export async function reopenWorktree(
     paneInfo = splitPane({ targetPane });
   }
 
-  await new Promise((resolve) => setTimeout(resolve, 500));
-
-  // Set pane title
+  // Guard the pane before any startup delay so shell detection cannot adopt it
+  // before the caller saves it. enforcePaneTitles applies the normal title
+  // once the pane is tracked in config.
   try {
-    const paneTitle = projectRoot === sessionProjectRoot
-      ? slug
-      : buildWorktreePaneTitle(slug, projectRoot, paneProjectName);
-    await tmuxService.setPaneTitle(paneInfo, paneTitle);
+    await tmuxService.setPaneTitle(paneInfo, `${DMUX_BOOTSTRAP_PANE_TITLE_PREFIX}${slug}`);
   } catch {
     // Ignore if setting title fails
   }
+
+  if (isFirstContentPane) {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  await new Promise((resolve) => setTimeout(resolve, 500));
 
   // Apply optimal layout
   if (controlPaneId) {

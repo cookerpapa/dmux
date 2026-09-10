@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DMUX_BOOTSTRAP_PANE_TITLE_PREFIX } from '../src/utils/paneBootstrapConfig.js';
 
 const fsMock = vi.hoisted(() => ({
   readFileSync: vi.fn(() => JSON.stringify({ controlPaneId: '%0' })),
@@ -9,7 +10,7 @@ const tmuxServiceMock = vi.hoisted(() => ({
   getCurrentSessionNameSync: vi.fn(() => 'dmux-test'),
   paneExists: vi.fn(async () => true),
   setSessionOptionSync: vi.fn(),
-  setPaneTitle: vi.fn(async () => {}),
+  setPaneTitle: vi.fn(async (_paneId: string, _title: string) => {}),
   refreshClient: vi.fn(async () => {}),
   sendShellCommand: vi.fn(async () => {}),
   sendTmuxKeys: vi.fn(async () => {}),
@@ -17,6 +18,7 @@ const tmuxServiceMock = vi.hoisted(() => ({
 }));
 
 const splitPaneMock = vi.hoisted(() => vi.fn(() => '%1'));
+const execSyncMock = vi.hoisted(() => vi.fn());
 const setupSidebarLayoutMock = vi.hoisted(() => vi.fn(() => '%1'));
 const recalculateAndApplyLayoutMock = vi.hoisted(() => vi.fn(async () => {}));
 const getInstalledAgentsMock = vi.hoisted(() => vi.fn(async () => ['claude', 'codex']));
@@ -26,7 +28,13 @@ const readWorktreeMetadataMock = vi.hoisted(() => vi.fn(() => ({
   agent: 'codex',
   permissionMode: 'bypassPermissions',
   branchName: 'feature/reopen-me',
+  mergeTargetChain: [{ branchName: 'main', worktreePath: '/repo' }],
 })));
+
+vi.mock('child_process', async (importOriginal) => ({
+  ...await importOriginal<typeof import('child_process')>(),
+  execSync: execSyncMock,
+}));
 
 vi.mock('fs', () => ({
   default: fsMock,
@@ -99,12 +107,58 @@ vi.mock('../src/utils/welcomePaneManager.js', () => ({
 describe('reopenWorktree', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    tmuxServiceMock.setPaneTitle.mockReset().mockResolvedValue(undefined);
+    execSyncMock.mockReset();
     fsMock.readFileSync.mockReturnValue(JSON.stringify({ controlPaneId: '%0' }));
     readWorktreeMetadataMock.mockReturnValue({
       agent: 'codex',
       permissionMode: 'bypassPermissions',
       branchName: 'feature/reopen-me',
+      mergeTargetChain: [{ branchName: 'main', worktreePath: '/repo' }],
     });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each([true, false])('keeps a reopened worktree out of shell detection until saved (first pane: %s)', async (firstPane) => {
+    const { reopenWorktree } = await import('../src/utils/reopenWorktree.js');
+    const { getUntrackedPanes } = await import('../src/utils/shellPaneDetection.js');
+    vi.useFakeTimers();
+
+    let title = 'zsh';
+    tmuxServiceMock.setPaneTitle.mockImplementation(async (_paneId, nextTitle) => {
+      title = nextTitle;
+    });
+    execSyncMock.mockImplementation(() => `%1::${title}::zsh\n%2::manual-shell::zsh`);
+    const manualShell = [{ paneId: '%2', title: 'manual-shell', command: 'zsh' }];
+    const projectRoot = firstPane ? '/repo' : '/other-repo';
+
+    const reopening = reopenWorktree({
+      slug: 'reopen-me',
+      worktreePath: `${projectRoot}/.dmux/worktrees/reopen-me`,
+      projectRoot,
+      existingPanes: firstPane ? [] : [{ id: 'dmux-0', slug: 'existing', prompt: '', paneId: '%9' }],
+      sessionProjectRoot: '/repo',
+      sessionConfigPath: '/repo/.dmux/dmux.config.json',
+    });
+
+    // Poll while the first startup delay is still pending, before config can
+    // contain the reopened pane. A genuine user-created shell is still found.
+    await vi.advanceTimersByTimeAsync(0);
+    const duringStartup = await getUntrackedPanes('dmux-test', [], '%0');
+    await vi.runAllTimersAsync();
+    const { pane } = await reopening;
+    expect(duringStartup).toEqual(manualShell);
+
+    // The caller saves the returned pane later. Do not drop the guard at the
+    // end of reopenWorktree and reintroduce the same race during that save.
+    expect(title).toBe(`${DMUX_BOOTSTRAP_PANE_TITLE_PREFIX}reopen-me`);
+    expect(await getUntrackedPanes('dmux-test', [], '%0')).toEqual(manualShell);
+    expect(pane.worktreePath).toBe(`${projectRoot}/.dmux/worktrees/reopen-me`);
+    expect(pane.mergeTargetChain).toEqual([{ branchName: 'main', worktreePath: '/repo' }]);
+    expect(pane.type).not.toBe('shell');
   });
 
   it('uses stored agent metadata and permission mode for resume', async () => {
