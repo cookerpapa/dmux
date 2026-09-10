@@ -1,0 +1,31 @@
+name: Validate reopened worktree fix
+
+on:
+  push:
+    branches:
+      - validation/reopen-worktree
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+      - name: Focused regressions
+        run: pnpm exec vitest --run --maxWorkers=2 --minWorkers=1 __tests__/reopenWorktree.test.ts __tests__/shellPaneDetection.test.ts
+      - name: Full test suite
+        run: pnpm run test --maxWorkers=2 --minWorkers=1
