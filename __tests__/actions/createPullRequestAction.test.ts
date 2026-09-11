@@ -70,7 +70,7 @@ describe('createPullRequestAction', () => {
       message: 'Committed changes',
       dismissable: true,
     });
-    mocked.createGitHubPullRequest.mockReturnValue({
+    mocked.createGitHubPullRequest.mockResolvedValue({
       url: 'https://github.com/acme/repo/pull/123',
       created: true,
       remoteName: 'origin',
@@ -197,7 +197,7 @@ describe('createPullRequestAction', () => {
   it('surfaces an existing PR instead of treating it as a failure', async () => {
     const pane = createWorktreePane({ branchName: 'feature/review-queue' });
     const context = createMockContext([pane]);
-    mocked.createGitHubPullRequest.mockReturnValue({
+    mocked.createGitHubPullRequest.mockResolvedValue({
       url: 'https://github.com/acme/repo/pull/123',
       created: false,
       remoteName: 'origin',
@@ -228,9 +228,7 @@ describe('createPullRequestAction', () => {
   it('returns an error result when GitHub PR creation fails', async () => {
     const pane = createWorktreePane();
     const context = createMockContext([pane]);
-    mocked.createGitHubPullRequest.mockImplementation(() => {
-      throw new Error('GitHub CLI auth failed');
-    });
+    mocked.createGitHubPullRequest.mockRejectedValue(new Error('GitHub CLI auth failed'));
 
     const result = await createPullRequest(pane, context);
     const reviewResult = await result.onConfirm?.();

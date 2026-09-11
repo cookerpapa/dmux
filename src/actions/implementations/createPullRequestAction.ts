@@ -204,7 +204,7 @@ export async function createPullRequest(
     body: string | undefined
   ): Promise<ActionResult> => {
     try {
-      const result = createGitHubPullRequest({
+      const result = await createGitHubPullRequest({
         repoPath: pane.worktreePath!,
         sourceBranch,
         targetBranch: mergeTarget.targetBranch,

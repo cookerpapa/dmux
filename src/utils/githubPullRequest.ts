@@ -1,4 +1,4 @@
-import { spawnSync } from 'child_process';
+import { execFile, spawnSync } from 'child_process';
 
 export interface GitHubPullRequestResult {
   url: string;
@@ -91,38 +91,36 @@ function runCommandText(
   command: string,
   args: string[],
   options: CommandOptions
-): string {
-  const result = spawnSync(command, args, {
-    cwd: options.cwd,
-    encoding: 'utf-8',
-    stdio: ['ignore', 'pipe', 'pipe'],
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(command, args, {
+      cwd: options.cwd,
+      encoding: 'utf-8',
+    }, (error, stdout, stderr) => {
+      if (error) {
+        if (options.allowFailure) {
+          resolve('');
+        } else if (typeof error.code === 'number') {
+          reject(new Error(stderr.trim() || stdout.trim() || `${command} exited with status ${error.code}`));
+        } else {
+          reject(error);
+        }
+        return;
+      }
+
+      resolve(stdout.trim());
+    });
+
+    // These commands must not wait for input from the sidebar's terminal.
+    child.stdin?.end();
   });
-
-  if (result.error) {
-    if (options.allowFailure) {
-      return '';
-    }
-    throw result.error;
-  }
-
-  if (result.status !== 0) {
-    if (options.allowFailure) {
-      return '';
-    }
-
-    const stderr = result.stderr?.trim();
-    const stdout = result.stdout?.trim();
-    throw new Error(stderr || stdout || `${command} exited with status ${result.status}`);
-  }
-
-  return result.stdout.trim();
 }
 
 function runGit(
   repoPath: string,
   args: string[],
   options: Omit<CommandOptions, 'cwd'> = {}
-): string {
+): Promise<string> {
   return runCommandText('git', args, { cwd: repoPath, ...options });
 }
 
@@ -130,20 +128,20 @@ function runGh(
   repoPath: string,
   args: string[],
   options: Omit<CommandOptions, 'cwd'> = {}
-): string {
+): Promise<string> {
   return runCommandText('gh', args, { cwd: repoPath, ...options });
 }
 
-function ensureGitHubCliAvailable(repoPath: string): void {
+async function ensureGitHubCliAvailable(repoPath: string): Promise<void> {
   try {
-    runGh(repoPath, ['--version']);
+    await runGh(repoPath, ['--version']);
   } catch {
     throw new Error(buildMissingGitHubCliMessage());
   }
 }
 
-function listGitRemotes(repoPath: string): string[] {
-  const output = runGit(repoPath, ['remote'], { allowFailure: true });
+async function listGitRemotes(repoPath: string): Promise<string[]> {
+  const output = await runGit(repoPath, ['remote'], { allowFailure: true });
 
   return output
     .split('\n')
@@ -151,8 +149,8 @@ function listGitRemotes(repoPath: string): string[] {
     .filter(Boolean);
 }
 
-export function getPreferredPushRemote(repoPath: string): string {
-  const upstream = runGit(
+export async function getPreferredPushRemote(repoPath: string): Promise<string> {
+  const upstream = await runGit(
     repoPath,
     ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'],
     { allowFailure: true }
@@ -162,12 +160,12 @@ export function getPreferredPushRemote(repoPath: string): string {
     return upstream.split('/')[0];
   }
 
-  const currentBranch = runGit(repoPath, ['branch', '--show-current'], {
+  const currentBranch = await runGit(repoPath, ['branch', '--show-current'], {
     allowFailure: true,
   });
 
   if (currentBranch && currentBranch !== 'HEAD') {
-    const configuredRemote = runGit(
+    const configuredRemote = await runGit(
       repoPath,
       ['config', `branch.${currentBranch}.remote`],
       { allowFailure: true }
@@ -178,7 +176,7 @@ export function getPreferredPushRemote(repoPath: string): string {
     }
   }
 
-  const remotes = listGitRemotes(repoPath);
+  const remotes = await listGitRemotes(repoPath);
   if (remotes.length === 0) {
     throw new Error('No git remote is configured for this repository.');
   }
@@ -186,11 +184,11 @@ export function getPreferredPushRemote(repoPath: string): string {
   return remotes.includes('origin') ? 'origin' : remotes[0];
 }
 
-export function findExistingPullRequestUrl(
+export async function findExistingPullRequestUrl(
   repoPath: string,
   sourceBranch: string
-): string | null {
-  const output = runGh(
+): Promise<string | null> {
+  const output = await runGh(
     repoPath,
     ['pr', 'view', sourceBranch, '--json', 'url', '--jq', '.url'],
     { allowFailure: true }
@@ -200,12 +198,12 @@ export function findExistingPullRequestUrl(
   return url || null;
 }
 
-function ensureRemoteBranchExists(
+async function ensureRemoteBranchExists(
   repoPath: string,
   remoteName: string,
   branchName: string
-): void {
-  const output = runGit(repoPath, ['ls-remote', '--heads', remoteName, branchName]);
+): Promise<void> {
+  const output = await runGit(repoPath, ['ls-remote', '--heads', remoteName, branchName]);
 
   if (!output.trim()) {
     throw new Error(
@@ -214,26 +212,26 @@ function ensureRemoteBranchExists(
   }
 }
 
-export function createGitHubPullRequest(options: {
+export async function createGitHubPullRequest(options: {
   repoPath: string;
   sourceBranch: string;
   targetBranch: string;
   remoteName?: string;
   title?: string;
   body?: string;
-}): GitHubPullRequestResult {
+}): Promise<GitHubPullRequestResult> {
   const {
     repoPath,
     sourceBranch,
     targetBranch,
-    remoteName = getPreferredPushRemote(repoPath),
+    remoteName = await getPreferredPushRemote(repoPath),
     title,
     body,
   } = options;
 
-  ensureGitHubCliAvailable(repoPath);
+  await ensureGitHubCliAvailable(repoPath);
 
-  const existingUrl = findExistingPullRequestUrl(repoPath, sourceBranch);
+  const existingUrl = await findExistingPullRequestUrl(repoPath, sourceBranch);
   if (existingUrl) {
     return {
       url: existingUrl,
@@ -242,9 +240,9 @@ export function createGitHubPullRequest(options: {
     };
   }
 
-  ensureRemoteBranchExists(repoPath, remoteName, targetBranch);
+  await ensureRemoteBranchExists(repoPath, remoteName, targetBranch);
 
-  runGit(repoPath, ['push', '--set-upstream', remoteName, sourceBranch]);
+  await runGit(repoPath, ['push', '--set-upstream', remoteName, sourceBranch]);
 
   const hasExplicitTitle = typeof title === 'string' && title.trim().length > 0;
   const createArgs = [
@@ -264,9 +262,9 @@ export function createGitHubPullRequest(options: {
   }
 
   try {
-    runGh(repoPath, createArgs);
+    await runGh(repoPath, createArgs);
   } catch (error) {
-    const existingAfterCreate = findExistingPullRequestUrl(repoPath, sourceBranch);
+    const existingAfterCreate = await findExistingPullRequestUrl(repoPath, sourceBranch);
     if (existingAfterCreate) {
       return {
         url: existingAfterCreate,
@@ -278,7 +276,7 @@ export function createGitHubPullRequest(options: {
     throw error;
   }
 
-  const createdUrl = findExistingPullRequestUrl(repoPath, sourceBranch);
+  const createdUrl = await findExistingPullRequestUrl(repoPath, sourceBranch);
   if (!createdUrl) {
     throw new Error('Pull request was created but the resulting URL could not be determined.');
   }
